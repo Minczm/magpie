@@ -808,9 +808,16 @@ func (s *Server) images(edit bool) http.HandlerFunc {
 			capBack time.Time
 			skipped []string
 		)
+		ua := r.UserAgent()
+		_, httpMCP := ctx.Value(imageMCPDrawing{}).(struct{})
+		mcp := httpMCP || ua == DrawAgent || strings.HasSuffix(ua, " "+DrawAgent)
 		for i, m := range tries {
 			call.Provider, model = m.Provider.ID, m.Model
-			drew, out, code, capBack, err = s.drawOnAccounts(ctx, memberOn(r, g, m), m.Provider, m.Model, d)
+			try := d
+			if mcp {
+				try = imageMCPDrawFor(d, m.Provider, m.Model)
+			}
+			drew, out, code, capBack, err = s.drawOnAccounts(ctx, memberOn(r, g, m), m.Provider, m.Model, try)
 			// a group's next member is asked as a chat's would be: while
 			// this one's vendor fails, is out of quota or doesn't serve the
 			// model; a refusal of the request itself is the request's

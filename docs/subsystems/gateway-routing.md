@@ -2757,9 +2757,14 @@ it is, a file path only for a `local` caller.
 
 A drawing runs `images` in-process on a clone of the request
 (`inProcess`, the caller and key kept), so it is routed, counted and held to
-the key's models as `/v1/images/generations` and `/v1/images/edits` are. It
-runs as a job under `context.WithoutCancel` for at most 15 minutes; the tool
-answers within 20 seconds, else with an id that `generation_result` waits on.
+the key's models as `/v1/images/generations` and `/v1/images/edits` are.
+For both stdio and HTTP MCP, `imageMCPDrawFor` puts `generate_image`'s
+`WIDTHxHEIGHT` or aspect-ratio `size` in the prompt instead of the request's
+`size` field when asking a ChatGPT subscription (including a Remote Magpie's
+namespaced Codex image model). The upstream chooses the actual pixel dimensions.
+`auto` keeps its meaning. The HTTP MCP job runs under `context.WithoutCancel`
+for at most 15 minutes. The tool answers within 20 seconds, else with an id
+that `generation_result` waits on.
 Each image comes back as MCP image content (up to 5 MB each) and at a URL
 under `/mcp/magpie/image/files/` (a vendor's URL is fetched first). The
 file store is in memory, kept an hour and 256 MB at most, oldest first out.

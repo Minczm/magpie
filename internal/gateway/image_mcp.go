@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -82,13 +83,41 @@ const (
 func ImageToolProps(images string) map[string]any {
 	return map[string]any{
 		"prompt":           map[string]any{"type": "string", "description": "What to draw, or how to change the reference images."},
-		"size":             map[string]any{"type": "string", "description": "WIDTHxHEIGHT (1024x1024, 1536x1024, 1024x1536) or an aspect ratio (16:9). Default: the model's."},
+		"size":             map[string]any{"type": "string", "description": "WIDTHxHEIGHT (1024x1024, 1536x1024, 1024x1536) or an aspect ratio (16:9). For the ChatGPT subscription's GPT Image this guides the canvas in the prompt. The returned pixel dimensions may differ. Default: the model's."},
 		"n":                map[string]any{"type": "integer", "minimum": 1, "maximum": 4, "description": "How many images (default 1)."},
 		"reference_images": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Images to edit or draw from: " + images + "."},
 		"quality":          map[string]any{"type": "string", "description": "low, medium, high, xhigh, max or auto, for models that take it (xhigh and max: GPT Image 2.5 and later)."},
 		"complexity":       map[string]any{"type": "string", "description": "low, medium or high: how much detail GPT Image 2.6 and later put in (default high)."},
 		"background":       map[string]any{"type": "string", "description": "transparent, opaque or auto, for models that take it."},
 	}
+}
+
+type imageMCPDrawing struct{}
+
+var imageMCPCanvas = regexp.MustCompile(`^([1-9][0-9]{0,8})\s*([xX×:：])\s*([1-9][0-9]{0,8})$`)
+
+// imageMCPDrawFor moves an MCP size into the prompt for the ChatGPT
+// subscription, following Codex's prompt-driven canvas selection. A
+// Remote Magpie preserves the original provider in its model name.
+func imageMCPDrawFor(d drawing, p provider.Provider, model string) drawing {
+	if !drawsCodex(p) {
+		cut := strings.LastIndexByte(model, '/')
+		if !p.IsRemoteMagpie() || cut < 0 || !strings.HasSuffix("/"+model[:cut], "/codex") || !strings.HasPrefix(model[cut+1:], codexDrawerFamily) {
+			return d
+		}
+	}
+	parts := imageMCPCanvas.FindStringSubmatch(strings.TrimSpace(d.Size))
+	if parts == nil {
+		return d
+	}
+	width, separator, height := parts[1], parts[2], parts[3]
+	canvas := fmt.Sprintf("exactly %s pixels wide and %s pixels high (%s x %s pixels)", width, height, width, height)
+	if separator == ":" || separator == "：" {
+		canvas = fmt.Sprintf("with a width-to-height aspect ratio of %s:%s", width, height)
+	}
+	d.Prompt = strings.TrimRight(d.Prompt, " \t\r\n") + "\n\nUse an output canvas " + canvas + " for the entire image. Do not print these dimensions in the image."
+	d.Size = ""
+	return d
 }
 
 // VideoToolProps is generate_video's arguments but where to save: image
@@ -346,7 +375,8 @@ func (s *Server) imageMCPDraw(r *http.Request, raw json.RawMessage) map[string]a
 	base := imageMCPBase(r)
 	// the drawing goes on when the call has answered: a job of its own,
 	// with the call's caller (its key, its agent) but not its end
-	in := inProcess(r, context.WithoutCancel(r.Context()), http.MethodPost, path, body)
+	ctx := context.WithValue(context.WithoutCancel(r.Context()), imageMCPDrawing{}, struct{}{})
+	in := inProcess(r, ctx, http.MethodPost, path, body)
 	j := s.imageMCPStart(who.KeyID, mcpUseOf(r.Context()), func() map[string]any {
 		defer release()
 		ctx, cancel := context.WithTimeout(in.Context(), imageMCPJobMost)
